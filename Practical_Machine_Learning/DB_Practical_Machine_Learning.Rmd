@@ -1,0 +1,105 @@
+---
+title: "Cousera: Practical Machine Learning"
+output: html_document
+---
+###Introduction
+Accelerometer data can be used to validate how well a subject performs certain activities. The training data set in this example was taken from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and consists of 19622 observations of 160 variables including the variable "classe", which is to be predicted. The training data can be downloaded from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv but was downloaded to this repo for simplicity.  
+```{r message=FALSE}
+library(caret)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(doParallel)
+registerDoParallel(cores=2)
+data <- read.csv("pml-training.csv", header=T, na.strings = c('NA','','#DIV/0!'))
+test_data <- read.csv("pml-testing.csv", header=T, na.strings = c('NA','','#DIV/0!'))
+```
+
+###Data conversion and predictor picking
+Many predictor columns consist mostly of NAs (Fig.1), while other are of type "logical" and cannot be used to train a model. In addition, several column variables contain no or very little information, which would not improve the model much but would elongate the analysis time. Furthermore, the data is sorted based on the 'classe' variable, and this information is stored in the variable "X". Also, the 'user_name' column contains the names of the participants, which is not important for this analysis. All these variables will be eliminated before the models are trained.  
+```{r}
+data$X <- NULL
+logical <- which(sapply(data, class)=='logical')
+data <- data[,-logical]  #all logical columns only have NA values
+data$user_name <- NULL      #user_name should not be part of the fitting
+nzv <- nearZeroVar(data)    #find columns with almost no variance
+data <- data[,-nzv]
+
+NA_columns <- apply(data, 2, function(x) sum(is.na(x))/length(x)*100)   #determine fraction of NAs per column
+plot(NA_columns, pch=19, main='Fig.1: Distribution of "NA" columns', xlab='Column in data set', ylab='Percent NA')
+data <- data[,-which(NA_columns > 80)]
+```
+
+###Data partitioning and exploritory data analysis
+To be able to have an estimate for the in-sample vs. out-of-sample error, the data set will be partitioned into a training and a test set using the caret package. In this case, 70% of the data will be used to train three models using the packages "rpart", "gbm" and "rf" for a CART, gradient boosting and random forest model, respectively.  
+
+```{r message=FALSE}
+set.seed(1)
+inTrain=createDataPartition(y=data$classe, p=0.7, list=F)
+training=data[inTrain,]
+testing=data[-inTrain,]
+
+set.seed(2)
+
+Fit_rpart <- train(classe ~ .,
+                data = training,
+                method = "rpart",
+                tuneLength= 20,
+                preProc = c('center', 'scale'))
+
+prediction1 <- predict(Fit_rpart, newdata = testing)
+CM_rpart <- confusionMatrix(data = prediction1, testing$classe)
+plot(Fit_rpart, main='Fig.2: Optimization of the CART model')
+
+Fit_gbm <- train(classe ~ .,
+                data = training,
+                method = "gbm",
+                tuneLength= 10,
+                preProc = c('center', 'scale'))
+
+prediction2 <- predict(Fit_gbm, newdata = testing)
+CM_gbm <- confusionMatrix(data = prediction2, testing$classe)
+plot(Fit_gbm, mein='Fig.3: Optimization of the gradient boosting model')
+
+Fit_rf <- train(classe ~ .,
+                data = training,
+                method = "rf",
+                tuneLength= 10,
+                preProc = c('center', 'scale'))
+
+prediction3 <- predict(Fit_rf, newdata=testing)
+CM_rf <- confusionMatrix(prediction3, testing$classe)
+plot(Fit_rf, main='Fig.4: Optimization of the random forest model')
+```
+
+###Results and conclusion
+The in-sample accuracy the CART, gradient boosting and random forest models are `r round(max(Fit_rpart$results['Accuracy'])*100,1)`, `r round(max(Fit_gbm$results['Accuracy'])*100,1)` and `r round(max(Fit_rf$results['Accuracy'])*100,1)` percent, respectively. 
+The out-of-sample accuracy for the CART, gradient boosting and random forest models are `r round(CM_rpart$overall[1]*100,1)`, `r round(CM_gbm$overall[1]*100,1)` and `r round(CM_rf$overall[1]*100,1)` percent, respectively. Based on these results, the random forest model is picked to predict the 'true' test samples for the course.    
+
+###Predicting Exercise on an untouched test set
+The test data set has to be treated in the same way as was done on the training data, i.e. columns that were eliminated from the training data have to be eliminated in the test data as well.  
+```{r}
+test_data$X <- NULL
+test_data <- test_data[,-logical]  #all logical columns only have NA values
+test_data$user_name <- NULL      #user_name should not be part of the fitting
+test_data <- test_data[,-nzv]
+test_data <- test_data[,-which(NA_columns > 80)]
+test_predicition <- predict(Fit_rf, test_data)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(test_predicition)
+```
+
+As a final note, all predicted classes were correct.  
+
+###Literature
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. (2013),* Qualitative Activity Recognition of Weight Lifting Exercises.* Proceedings of 4th Augmented Human (AH) International Conference in cooperation with ACM SIGCHI (Augmented Human'13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201#ixzz3DYy6u3EV
+
+**This dataset is licensed under the Creative Commons license (CC BY-SA)**

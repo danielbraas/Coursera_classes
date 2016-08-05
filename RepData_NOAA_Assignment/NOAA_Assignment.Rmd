@@ -1,0 +1,120 @@
+---
+title: "Analysis of the Top 10 Most Devastating Weather Events in the USA"
+output: html_document
+---
+##Introduction
+This report investigates the Top 10 most devasting weather events for mankind based on the type of harm caused (i.e. injury and fatality), as well as damage to property and crops. The analysis data were taken from  the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. In this study, NOAA weather data was recorded starting in April 1950 and ending in November 2011.
+
+##Data Processing
+The data is stored in a data frame, which needs to be loaded and subsequently manipulated in order to parse out the relevant information for this study. Libraries needed for this study are:  
+```{r, warning=FALSE, message=FALSE}
+require(data.table)
+require(plyr)
+require(dplyr)
+require(tidyr)
+require(ggplot2)
+```
+The data is stored in a bzip2-compressed comma-separated-value file.
+```{r, warning=FALSE, message=FALSE}
+data <- read.csv("repdata-data-StormData.csv.bz2")
+
+```
+
+##Results
+The first aspect of this report deals with the effects of severe weather events on people's health. To this end, health parameters are separated into injuries and fatalities and the Top 10 most devastating events for either category plotted as bar graphs.  
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+pop_health <- data %>% 
+  group_by(EVTYPE) %>% 
+  summarise('Fatality'=sum(FATALITIES, na.rm=T),
+            'Injury' = sum(INJURIES, na.rm=T)) %>% 
+  gather('Harm','number',-EVTYPE) %>% 
+  group_by(Harm) %>%
+  top_n(., 10) %>%
+  arrange(desc(number))
+  
+pop_health$EVTYPE <- factor(pop_health$EVTYPE, levels=pop_health$EVTYPE) 
+pop_health <- droplevels(pop_health)
+
+#make two-panel plot
+ggplot(pop_health, aes(EVTYPE, number/1000, fill=Harm)) +
+  geom_bar(stat='identity') +
+  labs(title='Top 10 Most Harmful Weather Events',
+       y='Number of Casualties (in thousand)', x='Weather Event Type') +
+  facet_grid(. ~ Harm, scales = 'free_x') +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0.5)) +
+  scale_fill_manual(values=c("#E41A1C","#377EB8"))
+```
+
+The graph shows that tornados caused by far the most fatalities (5633) and injuries (91346) in the United States of America from 1950 until 2011.  
+Next, the impact of severe weather on property and crops is evaluted. The NOAA data for this information is stored in columns for crop and property, but a scaling information (stored in two separate columns) also has to be taken into consideration to calculate the amount of damage in $US. In this case, 'H' and 'h' stand for hundreds, 'kK' for thousands, 'mM' for millions and 'bB' for billions of dollars in damage. Unfortunately, the scaling column also contains other factors, and it is unclear how to evaluate these. For simplicity reasons, the 'extra' factors are converted to one.   The Top 10 most damaging weather events from the data are parsed out and then printed as bar graphs.
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+#convert 'h','k', 'm' and 'b' to their respective numeric factor
+#and multiply damage variable with said factor
+data$CROPDMGEXP <- mapvalues(data$CROPDMGEXP, from=c("b","B","k","K","m","M","0","2","?",""), to=c('1e9','1e9','1e3','1e3','1e6','1e6','1','1','1','1'),
+                             warn_missing=F)
+data$CROPDMGEXP <- as.numeric(as.character(data$CROPDMGEXP))
+data$PROPDMGEXP[!grepl('[hHkKmMbB]', data$PROPDMGEXP)==T] <- 1
+data$PROPDMGEXP <- mapvalues(data$PROPDMGEXP, from=c("b","B","k","K","m","M","h","H"), to=c('1e9','1e9','1e3','1e3','1e6','1e6','100','100'),
+                             warn_missing=F)
+data$PROPDMGEXP <- as.numeric(as.character(data$PROPDMGEXP))
+
+#select crop and property damage, multiply by scaling factor, and create data frame with Top10 most devastating events for crop and propterty damage
+damage_data <- data %>% 
+  mutate('Dollar_Property'= .$PROPDMG * .$PROPDMGEXP,
+         'Dollar_Crop'= .$CROPDMG * .$CROPDMGEXP) %>% 
+  group_by(EVTYPE) %>%
+  summarise('Property'=sum(Dollar_Property, na.rm=T),
+            'Crop'=sum(Dollar_Crop, na.rm=T)) %>%
+  gather('Damage', 'Dollar_Amount', -EVTYPE) %>% 
+  group_by(Damage) %>%
+  top_n(10) %>% 
+  arrange(desc(Dollar_Amount))
+
+damage_data$EVTYPE <- factor(damage_data$EVTYPE, levels = damage_data$EVTYPE)
+damage_data <- droplevels(damage_data)
+
+#make two-panel plot
+ggplot(damage_data, aes(EVTYPE, log(Dollar_Amount, 10), fill=Damage)) +
+  facet_grid(. ~ Damage, scales='free_x') +
+  geom_bar(stat='identity', position='dodge', width=0.9) + 
+  theme_bw() + 
+  labs(title='Damage Dollar Costs by Event Type', x='Event Type', y='Dollar Amount (log10 ($))') +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0.5)) +
+  scale_fill_manual(values=c("#E41A1C","#377EB8"))
+```
+
+The data shows that weather events have caused tens of billions of $US within a 61 year time frame. The most severe events in terms of property and crop damage include flooding and storm-related events. For crops, drought is another major factor for devastation.  
+In summary, tornados and wind-related weather events have had the most devastating impact on the health of the US population as well as on properties and crops. Especially the combination of wind and water has caused the most havoc to property, crops and life in the US. Based on this analysis, improved storm warning systems should be installed to save people's health.
+
+##What US State has the most weather-related fatalities/injuries and over what period?
+
+```{r}
+#This is to calculate the Top10 harms and then brake it down by US State
+data %>%
+  group_by(STATE, EVTYPE) %>%
+  summarise('Total_Fatality'=sum(FATALITIES, na.rm=T),
+            'Total_Injuries'=sum(INJURIES, na.rm=T)) %>% 
+  gather(Harm, Number, -STATE,-EVTYPE) %>% 
+  arrange(desc(Number)) %>%
+  group_by(Harm) %>%
+  top_n(10) %>% 
+  droplevels() %>%
+  ggplot(., aes(x=EVTYPE, y=Number, fill=Harm)) + 
+  geom_bar(stat='identity', position='dodge') + 
+  facet_grid(. ~ STATE) +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0.5)) +
+  labs(title='Top10 Fatalities/Injuries by US State', x='Event Type')
+```
+```{r}
+data$BGN_DATE <- floor_date(mdy_hms(data$BGN_DATE), unit=c('month'))
+
+data %>% 
+  group_by(BGN_DATE) %>%
+  summarise('Total_Fatalities'=sum(FATALITIES, na.rm=T),
+            'Total_Injuries'=sum(INJURIES, na.r=T)) %>% 
+  gather(Harm, Number, -BGN_DATE) %>% 
+  ggplot(., aes(x=BGN_DATE, y=Number, color=Harm)) + 
+  geom_line()
+  
+```
